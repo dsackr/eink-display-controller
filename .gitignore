@@ -1,0 +1,36 @@
+# Virtual Environment
+venv/
+env/
+*.pyc
+__pycache__/
+
+# Uploaded images
+uploads/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+
+# Keep background images but ignore generated ones
+!static/safety_background.png
+static/current_safety_sign.png
+
+# Data files
+safety_data.json
+data.json
+
+# System files
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
