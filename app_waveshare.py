@@ -6,6 +6,7 @@ from datetime import datetime
 import sys
 import io
 import json
+import requests
 
 # Add the library path for Waveshare e-paper (dynamic path)
 sys.path.append(os.path.expanduser('~/e-Paper/RaspberryPi_JetsonNano/python/lib'))
@@ -44,6 +45,73 @@ CHECKMARK_MISSED_Y = 705
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def rgb_to_palette_code(r, g, b):
+    """Find closest color in 6-color palette"""
+    min_distance = float('inf')
+    closest_code = 0x1
+    
+    PALETTE = {
+        'black': (0, 0, 0, 0x0),
+        'white': (255, 255, 255, 0x1),
+        'yellow': (255, 255, 0, 0x2),
+        'red': (200, 80, 50, 0x3),
+        'blue': (100, 120, 180, 0x5),
+        'green': (200, 200, 80, 0x6)
+    }
+    
+    for color_name, (pr, pg, pb, code) in PALETTE.items():
+        distance = (r - pr)**2 + (g - pg)**2 + (b - pb)**2
+        if distance < min_distance:
+            min_distance = distance
+            closest_code = code
+    
+    return closest_code
+
+def convert_to_binary(img):
+    """Convert PIL Image to binary format for remote E-Paper display"""
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+    
+    img_ratio = img.width / img.height
+    display_ratio = 800 / 480
+    
+    if img_ratio > display_ratio:
+        new_height = 480
+        new_width = int(480 * img_ratio)
+    else:
+        new_width = 800
+        new_height = int(800 / img_ratio)
+    
+    img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    left = (new_width - 800) // 2
+    top = (new_height - 480) // 2
+    img = img.crop((left, top, left + 800, top + 480))
+    
+    # Use dithering with the 6-color palette
+    palette_data = [
+        0, 0, 0, 255, 255, 255, 255, 255, 0,
+        200, 80, 50, 100, 120, 180, 200, 200, 80
+    ]
+    palette_img = Image.new('P', (1, 1))
+    palette_img.putpalette(palette_data + [0] * (256 * 3 - len(palette_data)))
+    img = img.quantize(palette=palette_img, dither=Image.Dither.FLOYDSTEINBERG)
+    img = img.convert('RGB')
+    
+    binary_data = bytearray(192000)
+    
+    for row in range(480):
+        for col in range(0, 800, 2):
+            r1, g1, b1 = img.getpixel((col, row))
+            r2, g2, b2 = img.getpixel((col + 1, row))
+            
+            code1 = rgb_to_palette_code(r1, g1, b1)
+            code2 = rgb_to_palette_code(r2, g2, b2)
+            
+            byte_index = row * 400 + col // 2
+            binary_data[byte_index] = (code1 << 4) | code2
+    
+    return bytes(binary_data)
 
 def process_image(image_path, brightness=1.0, contrast=1.4, saturation=1.5, rotate_180=False):
     """Process image to fit 800x480 display - crop to fill with enhancement"""
@@ -463,6 +531,78 @@ def auto_update_safety():
         return jsonify({'success': True, 'message': 'Safety sign auto-updated and displayed'}), 200
     else:
         return jsonify({'success': False, 'error': 'Failed to auto-update'}), 500
+
+# ============ REMOTE DISPLAY FUNCTIONS ============
+
+@app.route('/send_to_remote', methods=['POST'])
+def send_to_remote():
+    """Send image to remote E-Paper display"""
+    try:
+        remote_ip = request.form.get('remote_ip')
+        if not remote_ip:
+            return jsonify({'error': 'No remote IP provided'}), 400
+        
+        # Get the image source (filename or new upload)
+        if 'filename' in request.form:
+            # Sending saved image
+            filename = request.form.get('filename')
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(filename))
+            
+            if not os.path.exists(filepath):
+                return jsonify({'error': 'Image not found'}), 404
+            
+            # Process image with enhancement settings
+            brightness = float(request.form.get('brightness', 1.0))
+            contrast = float(request.form.get('contrast', 1.4))
+            saturation = float(request.form.get('saturation', 1.5))
+            rotate_180 = request.form.get('rotate_180', 'false').lower() == 'true'
+            
+            img = process_image(filepath, brightness, contrast, saturation, rotate_180)
+        elif 'file' in request.files:
+            # New upload
+            file = request.files['file']
+            if file.filename == '':
+                return jsonify({'error': 'No file selected'}), 400
+            
+            if not allowed_file(file.filename):
+                return jsonify({'error': 'Invalid file type'}), 400
+            
+            # Save temporarily
+            temp_path = os.path.join(app.config['UPLOAD_FOLDER'], 'temp_remote.png')
+            file.save(temp_path)
+            
+            brightness = float(request.form.get('brightness', 1.0))
+            contrast = float(request.form.get('contrast', 1.4))
+            saturation = float(request.form.get('saturation', 1.5))
+            rotate_180 = request.form.get('rotate_180', 'false').lower() == 'true'
+            
+            img = process_image(temp_path, brightness, contrast, saturation, rotate_180)
+            os.remove(temp_path)
+        else:
+            return jsonify({'error': 'No image source provided'}), 400
+        
+        # Convert to binary
+        binary_data = convert_to_binary(img)
+        
+        # Send to remote display
+        print(f"Sending to remote display at {remote_ip}...")
+        response = requests.post(
+            f'http://{remote_ip}/display',
+            files={'file': ('image.bin', binary_data)},
+            headers={'Connection': 'keep-alive'},
+            timeout=120
+        )
+        
+        if response.status_code == 200:
+            return jsonify({'success': True, 'message': f'Image sent to {remote_ip}'}), 200
+        else:
+            return jsonify({'error': f'Remote display error: {response.status_code}'}), 500
+            
+    except Exception as e:
+        print(f"Error sending to remote: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/display/binary', methods=['POST'])
 def display_binary():
