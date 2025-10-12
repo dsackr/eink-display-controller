@@ -408,6 +408,15 @@
                     <label>Saturation: <span id="saturationValue">1.5</span></label>
                     <input type="range" id="saturation" min="0.5" max="2.5" step="0.1" value="1.5">
                 </div>
+                
+                <hr style="margin: 20px 0; border: none; border-top: 1px solid #e0e0e0;">
+                
+                <div class="slider-control">
+                    <label>Remote Display IP Address:</label>
+                    <input type="text" id="remoteIP" placeholder="192.168.86.127" value="192.168.86.127" 
+                           style="width: 100%; padding: 8px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 14px;">
+                    <p style="font-size: 12px; color: #666; margin-top: 5px;">Send images to another E-Paper display on your network</p>
+                </div>
             </div>
         </div>
         
@@ -425,6 +434,7 @@
         
         <div style="text-align: center;">
             <button class="btn" id="uploadBtn" disabled>Display Image</button>
+            <button class="btn" id="remoteBtn" disabled style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">Send to Remote</button>
             <button class="btn btn-secondary" id="clearBtn">Clear Display</button>
         </div>
         
@@ -453,6 +463,63 @@
             document.querySelectorAll('.tab-content').forEach(tab => {
                 tab.style.display = 'none';
             });
+        
+        remoteBtn.addEventListener('click', async () => {
+            const remoteIP = remoteIPInput.value.trim();
+            
+            if (!remoteIP) {
+                showStatus('✗ Please enter a remote display IP address', 'error');
+                return;
+            }
+            
+            // Validate IP format (basic check)
+            const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+            if (!ipPattern.test(remoteIP)) {
+                showStatus('✗ Invalid IP address format', 'error');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('remote_ip', remoteIP);
+            formData.append('brightness', brightnessSlider.value);
+            formData.append('contrast', contrastSlider.value);
+            formData.append('saturation', saturationSlider.value);
+            formData.append('rotate_180', rotate180Checkbox.checked);
+            
+            // Check if we have a saved file or new upload
+            if (selectedSavedFilename) {
+                formData.append('filename', selectedSavedFilename);
+            } else if (selectedFile) {
+                formData.append('file', selectedFile);
+            } else {
+                return;
+            }
+            
+            remoteBtn.disabled = true;
+            const originalText = remoteBtn.textContent;
+            remoteBtn.textContent = 'Sending...';
+            showStatus(`Sending to ${remoteIP}...`, 'info');
+            
+            try {
+                const response = await fetch('/send_to_remote', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showStatus(`✓ Image sent to ${remoteIP} successfully!`, 'success');
+                } else {
+                    showStatus('✗ Error: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showStatus('✗ Connection error: ' + error.message, 'error');
+            } finally {
+                remoteBtn.disabled = false;
+                remoteBtn.textContent = originalText;
+            }
+        });
             
             // Remove active class from all tab buttons
             document.querySelectorAll('.tab').forEach(btn => {
@@ -472,6 +539,7 @@
         const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('fileInput');
         const uploadBtn = document.getElementById('uploadBtn');
+        const remoteBtn = document.getElementById('remoteBtn');
         const clearBtn = document.getElementById('clearBtn');
         const preview = document.getElementById('preview');
         const previewImage = document.getElementById('previewImage');
@@ -482,6 +550,7 @@
         const contrastSlider = document.getElementById('contrast');
         const saturationSlider = document.getElementById('saturation');
         const rotate180Checkbox = document.getElementById('rotate180');
+        const remoteIPInput = document.getElementById('remoteIP');
         const brightnessValue = document.getElementById('brightnessValue');
         const contrastValue = document.getElementById('contrastValue');
         const saturationValue = document.getElementById('saturationValue');
@@ -565,6 +634,7 @@
             previewImage.src = '/preview/' + filename + '?' + Date.now(); // Cache bust
             preview.style.display = 'block';
             uploadBtn.disabled = false;
+            remoteBtn.disabled = false;
             uploadBtn.textContent = 'Display Image';
             
             // Update preview title for saved image
@@ -596,6 +666,7 @@
                         selectedSavedFilename = null;
                         preview.style.display = 'none';
                         uploadBtn.disabled = true;
+                        remoteBtn.disabled = true;
                     }
                     
                     loadImageHistory(); // Refresh list
@@ -611,6 +682,17 @@
         window.addEventListener('load', () => {
             loadImageHistory();
             updateSettingsIndicator();
+            
+            // Load saved remote IP from localStorage
+            const savedIP = localStorage.getItem('remoteDisplayIP');
+            if (savedIP) {
+                remoteIPInput.value = savedIP;
+            }
+        });
+
+        // Save remote IP to localStorage when changed
+        remoteIPInput.addEventListener('change', () => {
+            localStorage.setItem('remoteDisplayIP', remoteIPInput.value);
         });
 
         // Update slider value displays
@@ -686,6 +768,7 @@
                 previewImage.src = e.target.result;
                 preview.style.display = 'block';
                 uploadBtn.disabled = false;
+                remoteBtn.disabled = false;
                 
                 // Update preview title for new upload
                 document.getElementById('previewTitle').textContent = '📋 Preview - New Upload';
