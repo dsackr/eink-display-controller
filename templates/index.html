@@ -456,52 +456,268 @@
     
     </div>
 
-    <script>
-        // Tab switching
-        function switchTab(tabName) {
-            // Hide all tabs
-            document.querySelectorAll('.tab-content').forEach(tab => {
-                tab.style.display = 'none';
-            });
+<script>
+    // Tab switching
+    function switchTab(tabName) {
+        // Hide all tabs
+        document.querySelectorAll('.tab-content').forEach(tab => {
+            tab.style.display = 'none';
+        });
         
-        remoteBtn.addEventListener('click', async () => {
-            const remoteIP = remoteIPInput.value.trim();
+        // Remove active class from all tab buttons
+        document.querySelectorAll('.tab').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        
+        // Show selected tab
+        if (tabName === 'gallery') {
+            document.getElementById('gallery-tab').style.display = 'block';
+            document.querySelectorAll('.tab')[0].classList.add('active');
+        } else if (tabName === 'safety') {
+            document.getElementById('safety-tab').style.display = 'block';
+            document.querySelectorAll('.tab')[1].classList.add('active');
+        }
+    }
+    
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const remoteBtn = document.getElementById('remoteBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const preview = document.getElementById('preview');
+    const previewImage = document.getElementById('previewImage');
+    const status = document.getElementById('status');
+    
+    // Enhancement sliders
+    const brightnessSlider = document.getElementById('brightness');
+    const contrastSlider = document.getElementById('contrast');
+    const saturationSlider = document.getElementById('saturation');
+    const rotate180Checkbox = document.getElementById('rotate180');
+    const remoteIPInput = document.getElementById('remoteIP');
+    const brightnessValue = document.getElementById('brightnessValue');
+    const contrastValue = document.getElementById('contrastValue');
+    const saturationValue = document.getElementById('saturationValue');
+    
+    let selectedFile = null;
+    let selectedSavedFilename = null;
+
+    // Toggle enhancement controls
+    function toggleEnhancement() {
+        const sliders = document.getElementById('enhancementSliders');
+        const icon = document.getElementById('toggleIcon');
+        
+        if (sliders.style.display === 'none') {
+            sliders.style.display = 'block';
+            icon.classList.add('open');
+        } else {
+            sliders.style.display = 'none';
+            icon.classList.remove('open');
+        }
+    }
+
+    // Load image history
+    async function loadImageHistory() {
+        try {
+            const response = await fetch('/images');
+            const data = await response.json();
             
-            if (!remoteIP) {
-                showStatus('✗ Please enter a remote display IP address', 'error');
-                return;
+            const imageList = document.getElementById('imageList');
+            const imageHistory = document.getElementById('imageHistory');
+            
+            if (data.images && data.images.length > 0) {
+                imageList.innerHTML = data.images.map(img => `
+                    <div class="image-item" onclick="loadSavedImage('${img.filename}')" id="saved-${img.filename}">
+                        <img src="/thumbnail/${img.filename}" class="image-thumbnail" alt="${img.filename}">
+                        <div class="image-item-info">
+                            <div class="image-item-name">${img.filename}</div>
+                            <div class="image-item-size">${formatFileSize(img.size)}</div>
+                        </div>
+                        <div class="image-item-actions">
+                            <button class="image-item-btn" onclick="event.stopPropagation(); deleteImage('${img.filename}')">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+                imageHistory.style.display = 'block';
+            } else {
+                imageHistory.style.display = 'none';
             }
+        } catch (error) {
+            console.error('Failed to load image history:', error);
+        }
+    }
+
+    // Format file size
+    function formatFileSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    // Load saved image into preview
+    function loadSavedImage(filename) {
+        // Clear any previously selected saved image
+        document.querySelectorAll('.image-item').forEach(item => {
+            item.classList.remove('selected');
+        });
+        
+        // Mark this image as selected
+        const selectedItem = document.getElementById('saved-' + filename);
+        if (selectedItem) {
+            selectedItem.classList.add('selected');
+        }
+        
+        // Clear new file selection
+        selectedFile = null;
+        fileInput.value = '';
+        
+        // Set saved filename
+        selectedSavedFilename = filename;
+        
+        // Load full-size image into preview
+        previewImage.src = '/preview/' + filename + '?' + Date.now();
+        preview.style.display = 'block';
+        uploadBtn.disabled = false;
+        remoteBtn.disabled = false;
+        uploadBtn.textContent = 'Display Image';
+        
+        // Update preview title for saved image
+        document.getElementById('previewTitle').textContent = '📋 Preview - ' + filename;
+        document.getElementById('previewSubtitle').textContent = 'Adjust settings above if needed, then click "Display Image" below.';
+        
+        // Scroll to preview
+        preview.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // Delete image
+    async function deleteImage(filename) {
+        if (!confirm(`Delete ${filename}?`)) return;
+        
+        showStatus('Deleting ' + filename + '...', 'info');
+        
+        try {
+            const response = await fetch('/delete/' + filename, {
+                method: 'DELETE'
+            });
             
-            // Validate IP format (basic check)
-            const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
-            if (!ipPattern.test(remoteIP)) {
-                showStatus('✗ Invalid IP address format', 'error');
-                return;
+            const data = await response.json();
+            
+            if (response.ok) {
+                showStatus('✓ ' + filename + ' deleted', 'success');
+                
+                // Clear preview if this was the selected image
+                if (selectedSavedFilename === filename) {
+                    selectedSavedFilename = null;
+                    preview.style.display = 'none';
+                    uploadBtn.disabled = true;
+                    remoteBtn.disabled = true;
+                }
+                
+                loadImageHistory();
+            } else {
+                showStatus('✗ Error: ' + data.error, 'error');
             }
+        } catch (error) {
+            showStatus('✗ Connection error: ' + error.message, 'error');
+        }
+    }
+
+    // Update slider value displays
+    brightnessSlider.addEventListener('input', (e) => {
+        brightnessValue.textContent = e.target.value;
+        updateSettingsIndicator();
+    });
+    
+    contrastSlider.addEventListener('input', (e) => {
+        contrastValue.textContent = e.target.value;
+        updateSettingsIndicator();
+    });
+    
+    saturationSlider.addEventListener('input', (e) => {
+        saturationValue.textContent = e.target.value;
+        updateSettingsIndicator();
+    });
+
+    rotate180Checkbox.addEventListener('change', updateSettingsIndicator);
+
+    // Update settings indicator
+    function updateSettingsIndicator() {
+        const indicator = document.getElementById('settingsIndicator');
+        const isDefault = brightnessSlider.value == 1.0 && 
+                        contrastSlider.value == 1.4 && 
+                        saturationSlider.value == 1.5 &&
+                        !rotate180Checkbox.checked;
+        
+        if (!isDefault) {
+            indicator.textContent = '(modified)';
+        } else {
+            indicator.textContent = '';
+        }
+    }
+
+    uploadArea.addEventListener('click', () => fileInput.click());
+    
+    uploadArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        uploadArea.classList.add('dragover');
+    });
+    
+    uploadArea.addEventListener('dragleave', () => {
+        uploadArea.classList.remove('dragover');
+    });
+    
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('dragover');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            handleFile(files[0]);
+        }
+    });
+    
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            handleFile(e.target.files[0]);
+        }
+    });
+    
+    function handleFile(file) {
+        selectedFile = file;
+        selectedSavedFilename = null;
+        
+        // Clear any selected saved images
+        document.querySelectorAll('.image-item').forEach(item => {
+            item.classList.remove('selected');
+        });
+        
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            previewImage.src = e.target.result;
+            preview.style.display = 'block';
+            uploadBtn.disabled = false;
+            remoteBtn.disabled = false;
             
+            document.getElementById('previewTitle').textContent = '📋 Preview - New Upload';
+            document.getElementById('previewSubtitle').textContent = 'Adjust settings above if needed, then click "Display Image" below.';
+        };
+        reader.readAsDataURL(file);
+    }
+    
+    uploadBtn.addEventListener('click', async () => {
+        if (selectedSavedFilename) {
             const formData = new FormData();
-            formData.append('remote_ip', remoteIP);
             formData.append('brightness', brightnessSlider.value);
             formData.append('contrast', contrastSlider.value);
             formData.append('saturation', saturationSlider.value);
             formData.append('rotate_180', rotate180Checkbox.checked);
             
-            // Check if we have a saved file or new upload
-            if (selectedSavedFilename) {
-                formData.append('filename', selectedSavedFilename);
-            } else if (selectedFile) {
-                formData.append('file', selectedFile);
-            } else {
-                return;
-            }
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = 'Displaying...';
             
-            remoteBtn.disabled = true;
-            const originalText = remoteBtn.textContent;
-            remoteBtn.textContent = 'Sending...';
-            showStatus(`Sending to ${remoteIP}...`, 'info');
+            const settings = `(B:${brightnessSlider.value}, C:${contrastSlider.value}, S:${saturationSlider.value}${rotate180Checkbox.checked ? ', R:180°' : ''})`;
+            showStatus(`Displaying ${selectedSavedFilename} ${settings}...`, 'info');
             
             try {
-                const response = await fetch('/send_to_remote', {
+                const response = await fetch('/display/' + selectedSavedFilename, {
                     method: 'POST',
                     body: formData
                 });
@@ -509,379 +725,156 @@
                 const data = await response.json();
                 
                 if (response.ok) {
-                    showStatus(`✓ Image sent to ${remoteIP} successfully!`, 'success');
+                    showStatus('✓ Image displayed successfully!', 'success');
                 } else {
                     showStatus('✗ Error: ' + data.error, 'error');
                 }
             } catch (error) {
                 showStatus('✗ Connection error: ' + error.message, 'error');
             } finally {
-                remoteBtn.disabled = false;
-                remoteBtn.textContent = originalText;
-            }
-        });
-            
-            // Remove active class from all tab buttons
-            document.querySelectorAll('.tab').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            
-            // Show selected tab
-            if (tabName === 'gallery') {
-                document.getElementById('gallery-tab').style.display = 'block';
-                document.querySelectorAll('.tab')[0].classList.add('active');
-            } else if (tabName === 'safety') {
-                document.getElementById('safety-tab').style.display = 'block';
-                document.querySelectorAll('.tab')[1].classList.add('active');
-            }
-        }
-        
-        const uploadArea = document.getElementById('uploadArea');
-        const fileInput = document.getElementById('fileInput');
-        const uploadBtn = document.getElementById('uploadBtn');
-        const remoteBtn = document.getElementById('remoteBtn');
-        const clearBtn = document.getElementById('clearBtn');
-        const preview = document.getElementById('preview');
-        const previewImage = document.getElementById('previewImage');
-        const status = document.getElementById('status');
-        
-        // Enhancement sliders
-        const brightnessSlider = document.getElementById('brightness');
-        const contrastSlider = document.getElementById('contrast');
-        const saturationSlider = document.getElementById('saturation');
-        const rotate180Checkbox = document.getElementById('rotate180');
-        const remoteIPInput = document.getElementById('remoteIP');
-        const brightnessValue = document.getElementById('brightnessValue');
-        const contrastValue = document.getElementById('contrastValue');
-        const saturationValue = document.getElementById('saturationValue');
-        
-        let selectedFile = null;
-        let selectedSavedFilename = null;
-
-        // Toggle enhancement controls
-        function toggleEnhancement() {
-            const sliders = document.getElementById('enhancementSliders');
-            const icon = document.getElementById('toggleIcon');
-            
-            if (sliders.style.display === 'none') {
-                sliders.style.display = 'block';
-                icon.classList.add('open');
-            } else {
-                sliders.style.display = 'none';
-                icon.classList.remove('open');
-            }
-        }
-
-        // Load image history
-        async function loadImageHistory() {
-            try {
-                const response = await fetch('/images');
-                const data = await response.json();
-                
-                const imageList = document.getElementById('imageList');
-                const imageHistory = document.getElementById('imageHistory');
-                
-                if (data.images && data.images.length > 0) {
-                    imageList.innerHTML = data.images.map(img => `
-                        <div class="image-item" onclick="loadSavedImage('${img.filename}')" id="saved-${img.filename}">
-                            <img src="/thumbnail/${img.filename}" class="image-thumbnail" alt="${img.filename}">
-                            <div class="image-item-info">
-                                <div class="image-item-name">${img.filename}</div>
-                                <div class="image-item-size">${formatFileSize(img.size)}</div>
-                            </div>
-                            <div class="image-item-actions">
-                                <button class="image-item-btn" onclick="event.stopPropagation(); deleteImage('${img.filename}')">Delete</button>
-                            </div>
-                        </div>
-                    `).join('');
-                    imageHistory.style.display = 'block';
-                } else {
-                    imageHistory.style.display = 'none';
-                }
-            } catch (error) {
-                console.error('Failed to load image history:', error);
-            }
-        }
-
-        // Format file size
-        function formatFileSize(bytes) {
-            if (bytes < 1024) return bytes + ' B';
-            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-        }
-
-        // Load saved image into preview
-        function loadSavedImage(filename) {
-            // Clear any previously selected saved image
-            document.querySelectorAll('.image-item').forEach(item => {
-                item.classList.remove('selected');
-            });
-            
-            // Mark this image as selected
-            const selectedItem = document.getElementById('saved-' + filename);
-            if (selectedItem) {
-                selectedItem.classList.add('selected');
-            }
-            
-            // Clear new file selection
-            selectedFile = null;
-            fileInput.value = '';
-            
-            // Set saved filename
-            selectedSavedFilename = filename;
-            
-            // Load full-size image into preview
-            previewImage.src = '/preview/' + filename + '?' + Date.now(); // Cache bust
-            preview.style.display = 'block';
-            uploadBtn.disabled = false;
-            remoteBtn.disabled = false;
-            uploadBtn.textContent = 'Display Image';
-            
-            // Update preview title for saved image
-            document.getElementById('previewTitle').textContent = '📋 Preview - ' + filename;
-            document.getElementById('previewSubtitle').textContent = 'Adjust settings above if needed, then click "Display Image" below.';
-            
-            // Scroll to preview
-            preview.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }
-
-        // Delete image
-        async function deleteImage(filename) {
-            if (!confirm(`Delete ${filename}?`)) return;
-            
-            showStatus('Deleting ' + filename + '...', 'info');
-            
-            try {
-                const response = await fetch('/delete/' + filename, {
-                    method: 'DELETE'
-                });
-                
-                const data = await response.json();
-                
-                if (response.ok) {
-                    showStatus('✓ ' + filename + ' deleted', 'success');
-                    
-                    // Clear preview if this was the selected image
-                    if (selectedSavedFilename === filename) {
-                        selectedSavedFilename = null;
-                        preview.style.display = 'none';
-                        uploadBtn.disabled = true;
-                        remoteBtn.disabled = true;
-                    }
-                    
-                    loadImageHistory(); // Refresh list
-                } else {
-                    showStatus('✗ Error: ' + data.error, 'error');
-                }
-            } catch (error) {
-                showStatus('✗ Connection error: ' + error.message, 'error');
-            }
-        }
-
-        // Load history on page load
-        window.addEventListener('load', () => {
-            loadImageHistory();
-            updateSettingsIndicator();
-            
-            // Load saved remote IP from localStorage
-            const savedIP = localStorage.getItem('remoteDisplayIP');
-            if (savedIP) {
-                remoteIPInput.value = savedIP;
-            }
-        });
-
-        // Save remote IP to localStorage when changed
-        remoteIPInput.addEventListener('change', () => {
-            localStorage.setItem('remoteDisplayIP', remoteIPInput.value);
-        });
-
-        // Update slider value displays
-        brightnessSlider.addEventListener('input', (e) => {
-            brightnessValue.textContent = e.target.value;
-            updateSettingsIndicator();
-        });
-        
-        contrastSlider.addEventListener('input', (e) => {
-            contrastValue.textContent = e.target.value;
-            updateSettingsIndicator();
-        });
-        
-        saturationSlider.addEventListener('input', (e) => {
-            saturationValue.textContent = e.target.value;
-            updateSettingsIndicator();
-        });
-
-        rotate180Checkbox.addEventListener('change', updateSettingsIndicator);
-
-        // Update settings indicator
-        function updateSettingsIndicator() {
-            const indicator = document.getElementById('settingsIndicator');
-            const isDefault = brightnessSlider.value == 1.0 && 
-                            contrastSlider.value == 1.4 && 
-                            saturationSlider.value == 1.5 &&
-                            !rotate180Checkbox.checked;
-            
-            if (!isDefault) {
-                indicator.textContent = '(modified)';
-            } else {
-                indicator.textContent = '';
-            }
-        }
-
-        uploadArea.addEventListener('click', () => fileInput.click());
-        
-        uploadArea.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            uploadArea.classList.add('dragover');
-        });
-        
-        uploadArea.addEventListener('dragleave', () => {
-            uploadArea.classList.remove('dragover');
-        });
-        
-        uploadArea.addEventListener('drop', (e) => {
-            e.preventDefault();
-            uploadArea.classList.remove('dragover');
-            const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                handleFile(files[0]);
-            }
-        });
-        
-        fileInput.addEventListener('change', (e) => {
-            if (e.target.files.length > 0) {
-                handleFile(e.target.files[0]);
-            }
-        });
-        
-        function handleFile(file) {
-            selectedFile = file;
-            selectedSavedFilename = null; // Clear saved file selection
-            
-            // Clear any selected saved images
-            document.querySelectorAll('.image-item').forEach(item => {
-                item.classList.remove('selected');
-            });
-            
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                previewImage.src = e.target.result;
-                preview.style.display = 'block';
                 uploadBtn.disabled = false;
-                remoteBtn.disabled = false;
-                
-                // Update preview title for new upload
-                document.getElementById('previewTitle').textContent = '📋 Preview - New Upload';
-                document.getElementById('previewSubtitle').textContent = 'Adjust settings above if needed, then click "Display Image" below.';
-            };
-            reader.readAsDataURL(file);
-        }
-        
-        uploadBtn.addEventListener('click', async () => {
-            // Check if we have a saved file or new upload
-            if (selectedSavedFilename) {
-                // Display saved image
-                const formData = new FormData();
-                formData.append('brightness', brightnessSlider.value);
-                formData.append('contrast', contrastSlider.value);
-                formData.append('saturation', saturationSlider.value);
-                formData.append('rotate_180', rotate180Checkbox.checked);
-                
-                uploadBtn.disabled = true;
-                uploadBtn.textContent = 'Displaying...';
-                
-                const settings = `(B:${brightnessSlider.value}, C:${contrastSlider.value}, S:${saturationSlider.value}${rotate180Checkbox.checked ? ', R:180°' : ''})`;
-                showStatus(`Displaying ${selectedSavedFilename} ${settings}...`, 'info');
-                
-                try {
-                    const response = await fetch('/display/' + selectedSavedFilename, {
-                        method: 'POST',
-                        body: formData
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (response.ok) {
-                        showStatus('✓ Image displayed successfully!', 'success');
-                    } else {
-                        showStatus('✗ Error: ' + data.error, 'error');
-                    }
-                } catch (error) {
-                    showStatus('✗ Connection error: ' + error.message, 'error');
-                } finally {
-                    uploadBtn.disabled = false;
-                    uploadBtn.textContent = 'Display Image';
-                }
-            } else if (selectedFile) {
-                // Upload new file
-                const formData = new FormData();
-                formData.append('file', selectedFile);
-                formData.append('brightness', brightnessSlider.value);
-                formData.append('contrast', contrastSlider.value);
-                formData.append('saturation', saturationSlider.value);
-                formData.append('rotate_180', rotate180Checkbox.checked);
-                
-                uploadBtn.disabled = true;
-                uploadBtn.textContent = 'Uploading...';
-                showStatus('Sending image to display...', 'info');
-                
-                try {
-                    const response = await fetch('/upload', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (response.ok) {
-                        showStatus('✓ Image displayed successfully!', 'success');
-                        loadImageHistory(); // Refresh image list
-                    } else {
-                        showStatus('✗ Error: ' + data.error, 'error');
-                    }
-                } catch (error) {
-                    showStatus('✗ Connection error: ' + error.message, 'error');
-                } finally {
-                    uploadBtn.disabled = false;
-                    uploadBtn.textContent = 'Display Image';
-                }
+                uploadBtn.textContent = 'Display Image';
             }
-        });
-        
-        clearBtn.addEventListener('click', async () => {
-            clearBtn.disabled = true;
-            showStatus('Clearing display...', 'info');
+        } else if (selectedFile) {
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            formData.append('brightness', brightnessSlider.value);
+            formData.append('contrast', contrastSlider.value);
+            formData.append('saturation', saturationSlider.value);
+            formData.append('rotate_180', rotate180Checkbox.checked);
+            
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = 'Uploading...';
+            showStatus('Sending image to display...', 'info');
             
             try {
-                const response = await fetch('/clear', {
-                    method: 'POST'
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
                 });
                 
                 const data = await response.json();
                 
                 if (response.ok) {
-                    showStatus('✓ Display cleared!', 'success');
+                    showStatus('✓ Image displayed successfully!', 'success');
+                    loadImageHistory();
                 } else {
                     showStatus('✗ Error: ' + data.error, 'error');
                 }
             } catch (error) {
                 showStatus('✗ Connection error: ' + error.message, 'error');
             } finally {
-                clearBtn.disabled = false;
-            }
-        });
-        
-        function showStatus(message, type) {
-            status.textContent = message;
-            status.className = 'status ' + type;
-            status.style.display = 'block';
-            
-            if (type === 'success' || type === 'error') {
-                setTimeout(() => {
-                    status.style.display = 'none';
-                }, 5000);
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = 'Display Image';
             }
         }
-    </script>
+    });
+    
+    remoteBtn.addEventListener('click', async () => {
+        const remoteIP = remoteIPInput.value.trim();
+        
+        if (!remoteIP) {
+            showStatus('✗ Please enter a remote display IP address', 'error');
+            return;
+        }
+        
+        const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+        if (!ipPattern.test(remoteIP)) {
+            showStatus('✗ Invalid IP address format', 'error');
+            return;
+        }
+        
+        const formData = new FormData();
+        formData.append('remote_ip', remoteIP);
+        formData.append('brightness', brightnessSlider.value);
+        formData.append('contrast', contrastSlider.value);
+        formData.append('saturation', saturationSlider.value);
+        formData.append('rotate_180', rotate180Checkbox.checked);
+        
+        if (selectedSavedFilename) {
+            formData.append('filename', selectedSavedFilename);
+        } else if (selectedFile) {
+            formData.append('file', selectedFile);
+        } else {
+            return;
+        }
+        
+        remoteBtn.disabled = true;
+        const originalText = remoteBtn.textContent;
+        remoteBtn.textContent = 'Sending...';
+        showStatus(`Sending to ${remoteIP}...`, 'info');
+        
+        try {
+            const response = await fetch('/send_to_remote', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                showStatus(`✓ Image sent to ${remoteIP} successfully!`, 'success');
+            } else {
+                showStatus('✗ Error: ' + data.error, 'error');
+            }
+        } catch (error) {
+            showStatus('✗ Connection error: ' + error.message, 'error');
+        } finally {
+            remoteBtn.disabled = false;
+            remoteBtn.textContent = originalText;
+        }
+    });
+    
+    clearBtn.addEventListener('click', async () => {
+        clearBtn.disabled = true;
+        showStatus('Clearing display...', 'info');
+        
+        try {
+            const response = await fetch('/clear', {
+                method: 'POST'
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                showStatus('✓ Display cleared!', 'success');
+            } else {
+                showStatus('✗ Error: ' + data.error, 'error');
+            }
+        } catch (error) {
+            showStatus('✗ Connection error: ' + error.message, 'error');
+        } finally {
+            clearBtn.disabled = false;
+        }
+    });
+    
+    // Load history on page load
+    window.addEventListener('load', () => {
+        loadImageHistory();
+        updateSettingsIndicator();
+        
+        const savedIP = localStorage.getItem('remoteDisplayIP');
+        if (savedIP) {
+            remoteIPInput.value = savedIP;
+        }
+    });
+
+    // Save remote IP to localStorage when changed
+    remoteIPInput.addEventListener('change', () => {
+        localStorage.setItem('remoteDisplayIP', remoteIPInput.value);
+    });
+    
+    function showStatus(message, type) {
+        status.textContent = message;
+        status.className = 'status ' + type;
+        status.style.display = 'block';
+        
+        if (type === 'success' || type === 'error') {
+            setTimeout(() => {
+                status.style.display = 'none';
+            }, 5000);
+        }
+    }
+</script>
 </body>
 </html>
