@@ -586,6 +586,8 @@ def send_to_remote():
         
         # Send to remote display
         print(f"Sending to remote display at {remote_ip}...")
+        
+        # ESP32 and other displays use /display endpoint
         response = requests.post(
             f'http://{remote_ip}/display',
             files={'file': ('image.bin', binary_data)},
@@ -594,8 +596,10 @@ def send_to_remote():
         )
         
         if response.status_code == 200:
+            print(f"Successfully sent to {remote_ip}")
             return jsonify({'success': True, 'message': f'Image sent to {remote_ip}'}), 200
         else:
+            print(f"Remote display returned status: {response.status_code}")
             return jsonify({'error': f'Remote display error: {response.status_code}'}), 500
             
     except Exception as e:
