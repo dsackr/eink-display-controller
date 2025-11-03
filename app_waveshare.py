@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, abort
 import os
 from PIL import Image, ImageEnhance, ImageDraw, ImageFont
 from werkzeug.utils import secure_filename
@@ -11,21 +11,28 @@ import requests
 # Add the library path for Waveshare e-paper (dynamic path)
 sys.path.append(os.path.expanduser('~/e-Paper/RaspberryPi_JetsonNano/python/lib'))
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+USER_DATA_DIR = os.path.expanduser('~/eink_display')
+USER_UPLOAD_DIR = os.path.join(USER_DATA_DIR, 'uploads')
+USER_STATIC_DIR = os.path.join(USER_DATA_DIR, 'static')
+DEFAULT_STATIC_DIR = os.path.join(BASE_DIR, 'static')
+SAFETY_BACKGROUND_FILENAME = 'safety_background.png'
+SAFETY_OUTPUT_FILENAME = 'current_safety_sign.png'
+
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = os.path.expanduser('~/eink_display/uploads')
+app.config['UPLOAD_FOLDER'] = USER_UPLOAD_DIR
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'bmp', 'gif'}
 
-# Create upload folder if it doesn't exist
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+# Ensure filesystem paths exist
+os.makedirs(USER_UPLOAD_DIR, exist_ok=True)
+os.makedirs(USER_STATIC_DIR, exist_ok=True)
 
 # Safety Tracker Configuration
-SAFETY_DATA_FILE = os.path.expanduser('~/eink_display/safety_data.json')
-SAFETY_BACKGROUND = os.path.expanduser('~/eink_display/static/safety_background.png')
-SAFETY_OUTPUT = os.path.expanduser('~/eink_display/static/current_safety_sign.png')
-
-# Create static folder
-os.makedirs(os.path.expanduser('~/eink_display/static'), exist_ok=True)
+SAFETY_DATA_FILE = os.path.join(USER_DATA_DIR, 'safety_data.json')
+SAFETY_BACKGROUND = os.path.join(USER_STATIC_DIR, SAFETY_BACKGROUND_FILENAME)
+DEFAULT_SAFETY_BACKGROUND = os.path.join(DEFAULT_STATIC_DIR, SAFETY_BACKGROUND_FILENAME)
+SAFETY_OUTPUT = os.path.join(USER_STATIC_DIR, SAFETY_OUTPUT_FILENAME)
 
 # Safety tracker font sizes and positions
 FONT_SIZE_DAYS = 400
@@ -42,6 +49,14 @@ CHECKMARK_X = 940
 CHECKMARK_CHANGE_Y = 575
 CHECKMARK_DEPLOY_Y = 645
 CHECKMARK_MISSED_Y = 705
+
+def get_safety_background_path():
+    """Return the preferred safety background path, falling back to bundled asset."""
+    if os.path.exists(SAFETY_BACKGROUND):
+        return SAFETY_BACKGROUND
+    if os.path.exists(DEFAULT_SAFETY_BACKGROUND):
+        return DEFAULT_SAFETY_BACKGROUND
+    return None
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -389,14 +404,16 @@ def generate_safety_sign(auto_display=False):
     data['days_since'] = days_since
     data['prior_count'] = prior_count
     
-    # Check if background exists
-    if not os.path.exists(SAFETY_BACKGROUND):
-        print(f"WARNING: Safety sign background not found at {SAFETY_BACKGROUND}")
-        print("Please upload a background image named 'safety_background.png' to the static folder")
+    # Determine background image to use
+    background_path = get_safety_background_path()
+    if not background_path:
+        print("WARNING: Safety sign background not found.")
+        print(f"Checked locations: {SAFETY_BACKGROUND} and {DEFAULT_SAFETY_BACKGROUND}")
+        print("Please add a background image named 'safety_background.png' to either location.")
         return False
-    
+
     # Open background image
-    img = Image.open(SAFETY_BACKGROUND)
+    img = Image.open(background_path)
     draw = ImageDraw.Draw(img)
     
     img_width, img_height = img.size
@@ -509,8 +526,9 @@ def update_safety():
 def display_safety_sign():
     """Display the safety sign on e-paper"""
     if not os.path.exists(SAFETY_OUTPUT):
-        generate_safety_sign()
-    
+        if not generate_safety_sign():
+            return jsonify({'success': False, 'error': 'Failed to generate sign'}), 500
+
     if display_image(SAFETY_OUTPUT, brightness=1.0, contrast=1.4, saturation=1.5, rotate_180=True):
         return jsonify({'success': True, 'message': 'Safety sign displayed'}), 200
     else:
@@ -520,8 +538,12 @@ def display_safety_sign():
 def preview_safety_sign():
     """Serve the safety sign preview image"""
     if not os.path.exists(SAFETY_OUTPUT):
-        generate_safety_sign()
-    
+        if not generate_safety_sign():
+            abort(404)
+
+    if not os.path.exists(SAFETY_OUTPUT):
+        abort(404)
+
     return send_file(SAFETY_OUTPUT, mimetype='image/png')
 
 @app.route('/safety/auto_update', methods=['POST'])
