@@ -158,6 +158,12 @@
             color: #721c24;
             border: 1px solid #f5c6cb;
         }
+
+        .status.info {
+            background: #e8f4f8;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
         
         .display-info {
             background: #e8f4f8;
@@ -359,6 +365,33 @@
         .image-item-btn:hover {
             background: #c82333;
         }
+
+        .history-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+
+        .history-controls label {
+            font-size: 14px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        #savedImageSelect {
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            background: #fff;
+            color: #333;
+        }
+
+        #savedImageSelect:disabled {
+            color: #888;
+            background: #f0f0f0;
+        }
     </style>
 </head>
 <body>
@@ -441,6 +474,12 @@
         <div class="image-history" id="imageHistory" style="display: none;">
             <h3>📁 Previously Uploaded Images</h3>
             <p style="font-size: 13px; color: #666; margin-bottom: 15px;">Click an image to preview and display</p>
+            <div class="history-controls">
+                <label for="savedImageSelect">Choose from your library</label>
+                <select id="savedImageSelect" disabled>
+                    <option value="">Loading saved images…</option>
+                </select>
+            </div>
             <div id="imageList"></div>
         </div>
         
@@ -450,7 +489,7 @@
     
     <!-- SAFETY TRACKER TAB -->
     <div id="safety-tab" class="tab-content" style="display: none;">
-        <iframe src="/safety" style="width: 100%; height: 80vh; border: none; border-radius: 12px;"></iframe>
+        <iframe src="/safety" title="Safety tracker" style="width: 100%; height: 80vh; border: none; border-radius: 12px;"></iframe>
     </div>
     <!-- END SAFETY TRACKER TAB -->
     
@@ -487,6 +526,7 @@
     const preview = document.getElementById('preview');
     const previewImage = document.getElementById('previewImage');
     const status = document.getElementById('status');
+    const savedImageSelect = document.getElementById('savedImageSelect');
     
     // Enhancement sliders
     const brightnessSlider = document.getElementById('brightness');
@@ -500,6 +540,17 @@
     
     let selectedFile = null;
     let selectedSavedFilename = null;
+
+    function escapeForSelector(value) {
+        if (window.CSS && window.CSS.escape) {
+            return window.CSS.escape(value);
+        }
+        return value.replace(/["\\]/g, '\\$&');
+    }
+
+    function getImageItemElement(filename) {
+        return document.querySelector(`.image-item[data-filename="${escapeForSelector(filename)}"]`);
+    }
 
     // Toggle enhancement controls
     function toggleEnhancement() {
@@ -519,30 +570,126 @@
     async function loadImageHistory() {
         try {
             const response = await fetch('/images');
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
             const data = await response.json();
-            
             const imageList = document.getElementById('imageList');
             const imageHistory = document.getElementById('imageHistory');
-            
-            if (data.images && data.images.length > 0) {
-                imageList.innerHTML = data.images.map(img => `
-                    <div class="image-item" onclick="loadSavedImage('${img.filename}')" id="saved-${img.filename}">
-                        <img src="/thumbnail/${img.filename}" class="image-thumbnail" alt="${img.filename}">
-                        <div class="image-item-info">
-                            <div class="image-item-name">${img.filename}</div>
-                            <div class="image-item-size">${formatFileSize(img.size)}</div>
-                        </div>
-                        <div class="image-item-actions">
-                            <button class="image-item-btn" onclick="event.stopPropagation(); deleteImage('${img.filename}')">Delete</button>
-                        </div>
-                    </div>
-                `).join('');
-                imageHistory.style.display = 'block';
-            } else {
-                imageHistory.style.display = 'none';
+            const images = Array.isArray(data.images) ? data.images : [];
+            const hasImages = images.length > 0;
+
+            if (savedImageSelect) {
+                if (hasImages) {
+                    savedImageSelect.innerHTML = '<option value="">Select an image…</option>';
+                    images.forEach((img) => {
+                        const option = document.createElement('option');
+                        option.value = img.filename;
+                        option.textContent = img.filename;
+                        savedImageSelect.appendChild(option);
+                    });
+                    savedImageSelect.disabled = false;
+                } else {
+                    savedImageSelect.innerHTML = '<option value="">No saved images yet</option>';
+                    savedImageSelect.disabled = true;
+                    savedImageSelect.value = '';
+                    selectedSavedFilename = null;
+                }
+            }
+
+            if (imageList) {
+                imageList.innerHTML = '';
+            }
+
+            if (hasImages && imageList) {
+                images.forEach((img) => {
+                    const item = document.createElement('div');
+                    item.className = 'image-item';
+                    item.dataset.filename = img.filename;
+                    item.addEventListener('click', () => loadSavedImage(img.filename));
+
+                    const thumbnail = document.createElement('img');
+                    thumbnail.src = '/thumbnail/' + encodeURIComponent(img.filename);
+                    thumbnail.className = 'image-thumbnail';
+                    thumbnail.alt = img.filename;
+
+                    const info = document.createElement('div');
+                    info.className = 'image-item-info';
+
+                    const name = document.createElement('div');
+                    name.className = 'image-item-name';
+                    name.textContent = img.filename;
+
+                    const size = document.createElement('div');
+                    size.className = 'image-item-size';
+                    size.textContent = formatFileSize(img.size);
+
+                    info.appendChild(name);
+                    info.appendChild(size);
+
+                    const actions = document.createElement('div');
+                    actions.className = 'image-item-actions';
+
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'image-item-btn';
+                    deleteBtn.textContent = 'Delete';
+                    deleteBtn.addEventListener('click', (event) => {
+                        event.stopPropagation();
+                        deleteImage(img.filename);
+                    });
+
+                    actions.appendChild(deleteBtn);
+
+                    item.appendChild(thumbnail);
+                    item.appendChild(info);
+                    item.appendChild(actions);
+
+                    imageList.appendChild(item);
+                });
+            }
+
+            if (imageHistory) {
+                imageHistory.style.display = hasImages ? 'block' : 'none';
+            }
+
+            if (!hasImages && !selectedFile) {
+                preview.style.display = 'none';
+                uploadBtn.disabled = true;
+                remoteBtn.disabled = true;
+            }
+
+            if (hasImages && selectedSavedFilename) {
+                const selectedItem = getImageItemElement(selectedSavedFilename);
+                if (selectedItem) {
+                    selectedItem.classList.add('selected');
+                } else {
+                    selectedSavedFilename = null;
+                    if (!selectedFile) {
+                        preview.style.display = 'none';
+                        uploadBtn.disabled = true;
+                        remoteBtn.disabled = true;
+                    }
+                }
+            }
+
+            if (savedImageSelect) {
+                if (hasImages && selectedSavedFilename) {
+                    savedImageSelect.value = selectedSavedFilename;
+                } else if (!hasImages) {
+                    savedImageSelect.value = '';
+                }
             }
         } catch (error) {
             console.error('Failed to load image history:', error);
+            if (savedImageSelect) {
+                savedImageSelect.innerHTML = '<option value="">Unable to load images</option>';
+                savedImageSelect.disabled = true;
+            }
+            const imageHistory = document.getElementById('imageHistory');
+            if (imageHistory) {
+                imageHistory.style.display = 'none';
+            }
         }
     }
 
@@ -554,38 +701,44 @@
     }
 
     // Load saved image into preview
-    function loadSavedImage(filename) {
+    function loadSavedImage(filename, options = {}) {
         // Clear any previously selected saved image
         document.querySelectorAll('.image-item').forEach(item => {
             item.classList.remove('selected');
         });
-        
+
         // Mark this image as selected
-        const selectedItem = document.getElementById('saved-' + filename);
+        const selectedItem = getImageItemElement(filename);
         if (selectedItem) {
             selectedItem.classList.add('selected');
         }
-        
+
         // Clear new file selection
         selectedFile = null;
         fileInput.value = '';
-        
+
         // Set saved filename
         selectedSavedFilename = filename;
-        
+
+        if (savedImageSelect && !options.skipSelectUpdate) {
+            savedImageSelect.value = filename;
+        }
+
         // Load full-size image into preview
-        previewImage.src = '/preview/' + filename + '?' + Date.now();
+        previewImage.src = '/preview/' + encodeURIComponent(filename) + '?t=' + Date.now();
         preview.style.display = 'block';
         uploadBtn.disabled = false;
         remoteBtn.disabled = false;
         uploadBtn.textContent = 'Display Image';
-        
+
         // Update preview title for saved image
         document.getElementById('previewTitle').textContent = '📋 Preview - ' + filename;
         document.getElementById('previewSubtitle').textContent = 'Adjust settings above if needed, then click "Display Image" below.';
-        
+
         // Scroll to preview
-        preview.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        if (options.skipScroll !== true) {
+            preview.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
     }
 
     // Delete image
@@ -595,7 +748,7 @@
         showStatus('Deleting ' + filename + '...', 'info');
         
         try {
-            const response = await fetch('/delete/' + filename, {
+            const response = await fetch('/delete/' + encodeURIComponent(filename), {
                 method: 'DELETE'
             });
             
@@ -610,6 +763,9 @@
                     preview.style.display = 'none';
                     uploadBtn.disabled = true;
                     remoteBtn.disabled = true;
+                    if (savedImageSelect) {
+                        savedImageSelect.value = '';
+                    }
                 }
                 
                 loadImageHistory();
@@ -654,6 +810,23 @@
         }
     }
 
+    if (savedImageSelect) {
+        savedImageSelect.addEventListener('change', (e) => {
+            const filename = e.target.value;
+            if (filename) {
+                loadSavedImage(filename, { skipSelectUpdate: true });
+            } else {
+                selectedSavedFilename = null;
+                document.querySelectorAll('.image-item').forEach(item => item.classList.remove('selected'));
+                if (!selectedFile) {
+                    preview.style.display = 'none';
+                    uploadBtn.disabled = true;
+                    remoteBtn.disabled = true;
+                }
+            }
+        });
+    }
+
     uploadArea.addEventListener('click', () => fileInput.click());
     
     uploadArea.addEventListener('dragover', (e) => {
@@ -683,7 +856,10 @@
     function handleFile(file) {
         selectedFile = file;
         selectedSavedFilename = null;
-        
+        if (savedImageSelect) {
+            savedImageSelect.value = '';
+        }
+
         // Clear any selected saved images
         document.querySelectorAll('.image-item').forEach(item => {
             item.classList.remove('selected');
@@ -717,7 +893,7 @@
             showStatus(`Displaying ${selectedSavedFilename} ${settings}...`, 'info');
             
             try {
-                const response = await fetch('/display/' + selectedSavedFilename, {
+                const response = await fetch('/display/' + encodeURIComponent(selectedSavedFilename), {
                     method: 'POST',
                     body: formData
                 });
